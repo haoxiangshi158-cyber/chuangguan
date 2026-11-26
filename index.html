@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>拆迁小队 · 拉砖块打僵尸</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <div id="hud" class="hidden">
+      <div class="hgroup" id="hLevel">关卡</div>
+      <div class="hgroup" id="hHooks">钩子 ×0</div>
+      <div class="hgroup" id="hBricks">砖块 ×0</div>
+      <div class="hgroup" id="hEnemy">僵尸 ×0</div>
+      <div class="hgroup" id="hpWrap">
+        <span>小人</span>
+        <div id="hpBar"><div id="hpFill"></div></div>
+      </div>
+      <button id="pauseBtn" class="hbtn">暂停</button>
+    </div>
+
+    <button id="skillBtn" class="hidden">
+      <span class="skill-label">火箭</span>
+      <span id="skillCount">×1</span>
+    </button>
+
+    <div id="overlay" class="hidden"></div>
+  </div>
+
+  <script src="js/levels.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

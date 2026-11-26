@@ -1,0 +1,196 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: #0e141c;
+  overflow: hidden;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#stage {
+  position: relative;
+  width: min(100vw, calc(100vh * 16 / 9));
+  aspect-ratio: 16 / 9;
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+/* ---------- HUD ---------- */
+#hud {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(rgba(0,0,0,.45), rgba(0,0,0,0));
+  pointer-events: none;
+  font-size: 14px;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+
+.hgroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: rgba(0,0,0,.4);
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.hbtn {
+  pointer-events: auto;
+  border: none;
+  background: #2e3b4e;
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.hbtn:hover { background: #3d4f68; }
+.hbtn.active { background: #c0392b; }
+
+#hpWrap { margin-left: auto; }
+#hpBar {
+  width: 110px;
+  height: 12px;
+  background: rgba(0,0,0,.5);
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 6px;
+  overflow: hidden;
+}
+#hpFill {
+  height: 100%;
+  width: 100%;
+  background: #4caf50;
+  transition: width .2s, background .2s;
+}
+
+/* ---------- 火箭技能按钮 ---------- */
+#skillBtn {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  border: 3px solid #ffd94d;
+  background: radial-gradient(circle at 35% 30%, #ff7a5c, #c0392b 70%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.5);
+  transition: transform .1s;
+}
+#skillBtn:hover { transform: scale(1.06); }
+#skillBtn .skill-label { font-size: 16px; letter-spacing: 2px; }
+#skillBtn #skillCount { font-size: 13px; color: #ffe9b0; }
+#skillBtn.hidden { display: none; }
+#skillBtn:not(.ready) { filter: grayscale(.6) brightness(.75); }
+
+/* ---------- 覆盖面板 ---------- */
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 8, 14, .72);
+  backdrop-filter: blur(3px);
+}
+#overlay.hidden { display: none; }
+
+.panel {
+  background: #1c2634;
+  border: 2px solid #3a4a61;
+  border-radius: 16px;
+  padding: 26px 36px;
+  max-width: 680px;
+  max-height: 92%;
+  overflow-y: auto;
+  color: #e8eef7;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0,0,0,.6);
+}
+
+.panel h1 {
+  font-size: 32px;
+  margin-bottom: 6px;
+  color: #ffd94d;
+  letter-spacing: 3px;
+}
+.panel h2 { font-size: 22px; margin-bottom: 10px; color: #ffd94d; }
+.panel p { color: #b9c6d8; font-size: 14px; line-height: 1.8; margin: 5px 0; }
+.panel .stat { color: #7fd3ff; font-weight: bold; }
+.panel .gold { color: #ffd94d; font-weight: bold; }
+
+.btn {
+  display: inline-block;
+  margin: 10px 6px 0;
+  padding: 10px 28px;
+  font-size: 17px;
+  border: none;
+  border-radius: 12px;
+  background: #e67e22;
+  color: #fff;
+  cursor: pointer;
+  transition: transform .1s, background .15s;
+}
+.btn:hover { background: #f39c25; transform: translateY(-1px); }
+.btn.gray { background: #41506b; }
+.btn.gray:hover { background: #526383; }
+.btn.small { font-size: 14px; padding: 6px 16px; }
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin: 16px 0 6px;
+}
+.card {
+  width: 138px;
+  background: #26334a;
+  border: 1px solid #3a4a61;
+  border-radius: 10px;
+  padding: 12px 10px;
+}
+.card h3 { font-size: 15px; color: #ffd94d; margin-bottom: 4px; }
+.card p { font-size: 12px; line-height: 1.5; margin: 2px 0; }
+.card .lv { color: #7fd3ff; font-size: 12px; margin: 4px 0; }
+.card .btn { width: 100%; margin: 6px 0 0; font-size: 13px; padding: 6px 0; }
+.card .btn:disabled { background: #3a4353; color: #8b95a5; cursor: not-allowed; }
+
+.lvgrid { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 10px; }
+.lvbtn {
+  width: 34px; height: 34px;
+  border: none; border-radius: 8px;
+  background: #2e3b4e; color: #fff;
+  font-size: 14px; cursor: pointer;
+}
+.lvbtn:hover { background: #e67e22; }
+.lvbtn.locked { background: #232a35; color: #5a6372; cursor: not-allowed; }
+
+.tiplist { text-align: left; display: inline-block; margin-top: 6px; }
