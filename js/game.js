@@ -64,7 +64,7 @@ const THEME = () => THEMES[G.levelIdx % THEMES.length];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a = 1, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
 const approach = (v, t, step) => v + clamp(t - v, -step, step);
-const solidState = b => !b.dead && (b.state === 'rest' || b.state === 'pull');
+const solidState = b => !b.dead && b.state === 'rest'; // 拉扯中的砖不再提供支撑
 
 /* ---------- 全局状态 ---------- */
 const G = {
@@ -180,10 +180,18 @@ function recomputeSupport() {
       if (held.has(b)) continue;
       const rb = rowKey(b);
       let ok = false;
-      // 任意一格的正下方有被支撑的实体（梁只需一格接触）
-      for (let i = 0; i < b.len && !ok; i++) {
-        const below = cellMap.get((b.col + i) + '_' + (rb - 1));
+      if (b.len === 1) {
+        // 单块砖：正下方有被支撑的实体即可
+        const below = cellMap.get(b.col + '_' + (rb - 1));
         if (below && below !== b && held.has(below)) ok = true;
+      } else {
+        // 楼板梁：至少两处支撑才稳，一侧失力整根塌（单点撑不住会倾覆）
+        let contacts = 0;
+        for (let i = 0; i < b.len; i++) {
+          const below = cellMap.get((b.col + i) + '_' + (rb - 1));
+          if (below && below !== b && held.has(below)) contacts++;
+        }
+        if (contacts >= 2) ok = true;
       }
       if (ok) { held.add(b); changed = true; }
     }
@@ -233,7 +241,6 @@ function tryPull(b) {
   G.hook.state = 'aim';
   G.hook.t = 0;
   Snd.click();
-  recomputeSupport(); // 拉出的瞬间，上方失去支撑开始塌落
   updateHUD(true);
 }
 
@@ -251,6 +258,9 @@ function updateHook(dt) {
       b.yankT = 0;
       b.yankDur = (0.35 + 0.13 * b.load) / pullPowerMult();
       Snd.latch();
+      // 钩子吃上力的瞬间，上方结构立刻失去支撑开始塌落
+      recomputeSupport();
+      G.shake = Math.max(G.shake, 3);
     }
   } else if (hk.state === 'yank') {
     b.yankT += dt;
