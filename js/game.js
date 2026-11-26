@@ -108,21 +108,27 @@ function startLevel(idx) {
   G.pendingBooms = [];
 
   for (let r = 0; r < G.rows; r++) {
-    for (let c = 0; c < G.cols; c++) {
+    let c = 0;
+    while (c < G.cols) {
       const ch = def.grid[r][c];
-      if (ch === '#' || ch === 'X' || ch === 'T') {
-        G.bricks.push({
-          col: c, row: r, type: ch,
-          x: G.originX + c * G.CELL,
-          y: ROAD_Y - (G.rows - r) * G.CELL,
-          state: 'rest', vy: 0, fallStartY: 0,
-          load: 0, off: 0, yankT: 0, yankDur: 0,
-          flyT: 0, fx: 0, fy: 0, dead: false,
-        });
+      if (ch === '.') { c++; continue; }
+      let len = 1;
+      if (ch === 'S') {
+        // 楼板梁：一行里连续的 S 组成一整根刚性梁
+        while (c + len < G.cols && def.grid[r][c + len] === 'S') len++;
       }
+      G.bricks.push({
+        col: c, row: r, len, type: ch,
+        x: G.originX + c * G.CELL,
+        y: ROAD_Y - (G.rows - r) * G.CELL,
+        state: 'rest', vy: 0, fallStartY: 0,
+        load: 0, off: 0, yankT: 0, yankDur: 0,
+        flyT: 0, fx: 0, fy: 0, dead: false,
+      });
+      c += len;
     }
   }
-  G.total = G.bricks.length;
+  G.total = G.bricks.reduce((s, b) => s + b.len, 0);
   G.collected = 0;
 
   G.hook = { uses: def.pulls + save.upg.hooks, max: def.pulls + save.upg.hooks, state: 'idle', target: null, t: 0 };
@@ -146,14 +152,22 @@ function startLevel(idx) {
 }
 
 /* ================================================================
-   结构支撑（侧向粘接 + 下方支撑）
+   结构支撑
+   普通砖/钢梁/TNT：只靠【正下方】直接接触支撑（拉掉必塌）
+   楼板梁 S：一整根刚性梁，任意一格下方有支撑即稳（失去全部支撑整根塌）
 ================================================================ */
 function recomputeSupport() {
   const rest = G.bricks.filter(solidState);
   if (!rest.length) return;
   const rowKey = b => Math.round((ROAD_Y - b.y - G.CELL) / G.CELL);
-  const map = new Map();
-  for (const b of rest) map.set(b.col + '_' + rowKey(b), b);
+  // 单元格索引：格子所在列 → 该格下方的实体
+  const cellMap = new Map();
+  for (const b of rest) {
+    const rb = rowKey(b);
+    for (let i = 0; i < b.len; i++) {
+      cellMap.set((b.col + i) + '_' + rb, b);
+    }
+  }
 
   const held = new Set();
   for (const b of rest) {
@@ -166,13 +180,10 @@ function recomputeSupport() {
       if (held.has(b)) continue;
       const rb = rowKey(b);
       let ok = false;
-      for (let dc = -1; dc <= 1 && !ok; dc++) {
-        const o = map.get((b.col + dc) + '_' + (rb - 1));
-        if (o && held.has(o)) ok = true;
-      }
-      for (let dc = -1; dc <= 1 && !ok; dc += 2) {
-        const o = map.get((b.col + dc) + '_' + rb);
-        if (o && held.has(o)) ok = true;
+      // 任意一格的正下方有被支撑的实体（梁只需一格接触）
+      for (let i = 0; i < b.len && !ok; i++) {
+        const below = cellMap.get((b.col + i) + '_' + (rb - 1));
+        if (below && below !== b && held.has(below)) ok = true;
       }
       if (ok) { held.add(b); changed = true; }
     }
@@ -189,7 +200,10 @@ function recomputeSupport() {
 function brickLoad(b) {
   let n = 0;
   for (const o of G.bricks) {
-    if (o !== b && o.col === b.col && solidState(o) && o.y < b.y - 1) n++;
+    if (o !== b && solidState(o) && o.y < b.y - 1) {
+      // 与目标砖列重叠的都算压在上面的重量
+      if (o.col < b.col + b.len && b.col < o.col + o.len) n++;
+    }
   }
   return n;
 }
@@ -207,7 +221,8 @@ function ropeDir(b) {
 function tryPull(b) {
   if (G.state !== 'battle' || G.phase !== 'demo') return;
   if (G.hook.state !== 'idle') { addFloater(mouse.x, mouse.y - 10, '钩子忙', '#cfd8e6', 0.8); return; }
-  if (!b || b.state !== 'rest' || b.type === 'X') return;
+  if (!b || b.state !== 'rest') return;
+  if (b.type === 'X' || b.type === 'S' || b.len > 1) return; // 钢梁/楼板拉不动
   if (G.hook.uses <= 0) { addFloater(mouse.x, mouse.y - 10, '钩子用完了', '#ff6b5e', 0.9); return; }
 
   G.hook.uses--;
@@ -289,18 +304,21 @@ function updateBricks(dt) {
   for (const b of falling) {
     b.vy += GRAV * dt;
     b.y += b.vy * dt;
+    // 落点：任何一格下方最高的实体面（多格梁取最先接触的面）
     let landY = ROAD_Y;
     for (const o of G.bricks) {
-      if (o === b || o.dead) continue;
-      if (o.col !== b.col || !solidState(o)) continue;
-      if (o.y >= b.y + G.CELL - 1 && o.y < landY) landY = o.y;
+      if (o === b || o.dead || !solidState(o)) continue;
+      if (o.y < b.y + G.CELL - 1) continue; // 必须在下方
+      if (o.col < b.col + b.len && b.col < o.col + o.len) {
+        if (o.y < landY) landY = o.y;
+      }
     }
     if (b.y + G.CELL >= landY) {
       b.y = landY - G.CELL;
       b.vy = 0;
       const tiles = Math.max(0, (landY - b.fallStartY - G.CELL) / G.CELL);
       G.shake = Math.max(G.shake, clamp(tiles * 2, 2, 9));
-      burst(b.x + G.CELL / 2, b.y + G.CELL, 6 + tiles * 2, { color: '#cbb79a', spd: 100, life: 0.4, size: 3, grav: 500 });
+      burst(b.x + b.len * G.CELL / 2, b.y + G.CELL, 6 + tiles * 2, { color: '#cbb79a', spd: 100, life: 0.4, size: 3, grav: 500 });
       Snd.thud();
       if (b.type === 'T') {
         b.dead = true;
@@ -317,11 +335,13 @@ function updateBricks(dt) {
     b.flyT += dt / 0.55;
     if (b.flyT >= 1) {
       b.dead = true;
-      const gain = b.type === 'T' ? 2 : 1;
-      G.collected++;
+      const gain = b.type === 'T' ? 2 * b.len : b.len;
+      G.collected += b.len;
       G.hero.ammo += gain;
       addFloater(HOPPER.x, ROAD_Y - 6, '+' + gain, '#ffd94d', 0.8);
-      G.pipeAnims.push({ t: 0, color: b.type === 'X' ? '#9aa7b5' : '#e0a37e' });
+      for (let i = 0; i < Math.min(b.len, 5); i++) {
+        G.pipeAnims.push({ t: -i * 0.12, color: (b.type === 'X' || b.type === 'S') ? '#9aa7b5' : '#e0a37e' });
+      }
       Snd.coin();
     }
   }
@@ -355,11 +375,12 @@ function explodeBricks(x, y) {
   const R = G.CELL * 1.7;
   for (const b of G.bricks) {
     if (b.dead || b.state === 'collect' || b.state === 'falling') continue;
-    const d = Math.hypot(b.x + G.CELL / 2 - x, b.y + G.CELL / 2 - y);
-    if (d < R) {
+    const bcx = b.x + b.len * G.CELL / 2, bcy = b.y + G.CELL / 2;
+    const d = Math.hypot(bcx - x, bcy - y);
+    if (d < R + b.len * G.CELL * 0.25) {
       if (b.type === 'T') {
         b.dead = true;
-        queueBoom(b.x + G.CELL / 2, b.y + G.CELL / 2, 0.15);
+        queueBoom(bcx, bcy, 0.15);
       } else {
         collectBrick(b);
       }
@@ -599,7 +620,7 @@ function update(dt) {
     const settled = G.hook.state === 'idle'
       && !G.bricks.some(b => b.state === 'falling' || b.state === 'collect')
       && !G.pendingBooms.length;
-    const pullable = G.bricks.some(b => b.state === 'rest' && b.type !== 'X');
+    const pullable = G.bricks.some(b => b.state === 'rest' && (b.type === '#' || b.type === 'T'));
     if (settled && (G.hook.uses <= 0 || !pullable)) {
       G.demoDoneT += dt;
       if (G.demoDoneT > 1) {
@@ -916,6 +937,7 @@ function drawBricks() {
   const t = THEME();
   const C = G.CELL;
   for (const b of G.bricks) {
+    const w = b.len * C;
     let x = b.x, y = b.y, scale = 1, rot = 0, alpha = 1;
 
     if (b.state === 'collect') {
@@ -931,52 +953,73 @@ function drawBricks() {
       x = v.x; y = v.y;
     } else if (b.state === 'falling') {
       ctx.globalAlpha = 0.15;
-      ctx.fillStyle = t.brick;
-      ctx.fillRect(b.x + 3, b.y - b.vy * 0.03, C - 6, C - 6);
+      ctx.fillStyle = b.type === 'S' ? '#8a6db0' : t.brick;
+      ctx.fillRect(b.x + 3, b.y - b.vy * 0.03, w - 6, C - 6);
       ctx.globalAlpha = 1;
     }
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.translate(x + C / 2, y + C / 2);
+    ctx.translate(x + w / 2, y + C / 2);
     ctx.rotate(rot);
     ctx.scale(scale, scale);
-    ctx.translate(-C / 2, -C / 2);
+    ctx.translate(-w / 2, -C / 2);
 
-    if (b.type === '#') {
-      const alt = (Math.floor(b.y / C) % 2 === 0);
-      ctx.fillStyle = alt ? t.brick : t.brick2;
-      roundRect(1, 1, C - 2, C - 2, 4); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,.16)';
-      ctx.fillRect(4, 3, C - 8, 4);
-      ctx.fillStyle = 'rgba(0,0,0,.16)';
-      ctx.fillRect(4, C - 8, C - 8, 4);
-    } else if (b.type === 'X') {
-      ctx.fillStyle = '#6f7d8c';
-      roundRect(1, 1, C - 2, C - 2, 4); ctx.fill();
-      ctx.strokeStyle = '#4d5966';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(6, C - 6); ctx.lineTo(C - 6, 6);
-      ctx.stroke();
-    } else { // TNT
-      ctx.fillStyle = '#c0392b';
-      roundRect(1, 1, C - 2, C - 2, 4); ctx.fill();
-      ctx.fillStyle = '#1c1c24';
-      ctx.beginPath();
-      ctx.arc(C / 2, C / 2 + 2, C * 0.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#ffd94d';
+    if (b.type === 'S') {
+      // 楼板梁：一整根刚性梁
+      ctx.fillStyle = '#8a6db0';
+      roundRect(0, 1, w - 1, C - 2, 6); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.22)';
+      ctx.fillRect(4, 3, w - 9, 5);
+      ctx.fillStyle = 'rgba(0,0,0,.2)';
+      ctx.fillRect(4, C - 9, w - 9, 5);
+      ctx.strokeStyle = '#5e4780';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(C / 2 + 4, C / 2 - 5);
-      ctx.quadraticCurveTo(C / 2 + 10, C / 2 - 12, C / 2 + 8, C / 2 - 16);
+      ctx.moveTo(w / 2 - 7, 6); ctx.lineTo(w / 2 - 2, C - 6);
+      ctx.moveTo(w / 2 + 5, 6); ctx.lineTo(w / 2 + 10, C - 6);
       ctx.stroke();
-      if (Math.floor(G.time * 6) % 2 === 0) {
-        ctx.fillStyle = '#ffe08a';
-        ctx.beginPath();
-        ctx.arc(C / 2 + 8, C / 2 - 17, 2.5, 0, Math.PI * 2);
-        ctx.fill();
+    } else {
+      for (let i = 0; i < b.len; i++) {
+        ctx.save();
+        ctx.translate(i * C, 0);
+        if (b.type === '#') {
+          const alt = (Math.floor(b.y / C) + i) % 2 === 0;
+          ctx.fillStyle = alt ? t.brick : t.brick2;
+          roundRect(1, 1, C - 2, C - 2, 4); ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,.16)';
+          ctx.fillRect(4, 3, C - 8, 4);
+          ctx.fillStyle = 'rgba(0,0,0,.16)';
+          ctx.fillRect(4, C - 8, C - 8, 4);
+        } else if (b.type === 'X') {
+          ctx.fillStyle = '#6f7d8c';
+          roundRect(1, 1, C - 2, C - 2, 4); ctx.fill();
+          ctx.strokeStyle = '#4d5966';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(6, C - 6); ctx.lineTo(C - 6, 6);
+          ctx.stroke();
+        } else { // TNT
+          ctx.fillStyle = '#c0392b';
+          roundRect(1, 1, C - 2, C - 2, 4); ctx.fill();
+          ctx.fillStyle = '#1c1c24';
+          ctx.beginPath();
+          ctx.arc(C / 2, C / 2 + 2, C * 0.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ffd94d';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(C / 2 + 4, C / 2 - 5);
+          ctx.quadraticCurveTo(C / 2 + 10, C / 2 - 12, C / 2 + 8, C / 2 - 16);
+          ctx.stroke();
+          if (Math.floor(G.time * 6) % 2 === 0) {
+            ctx.fillStyle = '#ffe08a';
+            ctx.beginPath();
+            ctx.arc(C / 2 + 8, C / 2 - 17, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
       }
     }
 
@@ -1193,22 +1236,23 @@ function drawHover() {
   const b = hoverBrick;
   if (b.state !== 'rest') return;
   const C = G.CELL;
-  const steel = b.type === 'X';
-  const load = steel ? 0 : brickLoad(b);
+  const wpx = b.len * C;
+  const fixed = b.type === 'X' || b.type === 'S' || b.len > 1;
+  const load = fixed ? 0 : brickLoad(b);
   let col = '#7dff8a';
   if (load >= 3) col = '#ffd94d';
   if (load >= 6) col = '#ff6b5e';
-  if (steel) col = '#9aa7b5';
+  if (fixed) col = '#9aa7b5';
   ctx.strokeStyle = col;
   ctx.lineWidth = 3;
   ctx.setLineDash([6, 4]);
-  ctx.strokeRect(b.x - 1.5, b.y - 1.5, C + 3, C + 3);
+  ctx.strokeRect(b.x - 1.5, b.y - 1.5, wpx + 3, C + 3);
   ctx.setLineDash([]);
   ctx.font = 'bold 12px sans-serif';
   ctx.textAlign = 'center';
-  const label = steel ? '钢梁·拉不动' : '承重 ' + load;
+  const label = b.type === 'S' ? '楼板·拉不动' : b.type === 'X' ? '钢梁·拉不动' : (b.type === 'T' ? '炸药·承重 ' + load : '承重 ' + load);
   const tw = ctx.measureText(label).width + 14;
-  const lx = clamp(b.x + C / 2, tw / 2 + 4, W - tw / 2 - 4);
+  const lx = clamp(b.x + wpx / 2, tw / 2 + 4, W - tw / 2 - 4);
   ctx.fillStyle = 'rgba(0,0,0,.65)';
   roundRect(lx - tw / 2, b.y - 26, tw, 19, 8); ctx.fill();
   ctx.fillStyle = col;
@@ -1498,7 +1542,7 @@ function findBrickAt(x, y) {
   for (const b of G.bricks) {
     if (b.dead) continue;
     if (b.state !== 'rest') continue;
-    if (x >= b.x && x < b.x + G.CELL && y >= b.y && y < b.y + G.CELL) return b;
+    if (x >= b.x && x < b.x + b.len * G.CELL && y >= b.y && y < b.y + G.CELL) return b;
   }
   return null;
 }
