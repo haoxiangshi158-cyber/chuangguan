@@ -14,6 +14,8 @@ const HOOK_ANCHOR = { x: 118, y: 302 };   // 钩子锚点
 const HOPPER = { x: 436, w: 88 };         // 漏斗口
 const HERO_X = 170;
 const GRAV = 1800;
+const DEMO_GRACE = 4;                              // 建筑拆完后，留给玩家拉贴地砖的宽限秒数
+const FIGHT_BTN = { x: W - 104, y: H - 70, w: 86, h: 50 };  // 提前开战按钮（拆迁阶段）
 
 /* ---------- DOM ---------- */
 const canvas = document.getElementById('game');
@@ -79,7 +81,7 @@ const G = {
   collected: 0, total: 0,
   rockets: 0,
   waveIdx: 0, waveDelay: 0, waveTotal: 0, announce: null,
-  shake: 0, time: 0, hintT: 0, demoDoneT: 0, victoryT: 0,
+  shake: 0, time: 0, hintT: 0, demoDoneT: 0, demoGrace: false, victoryT: 0,
   nextIdx: 0,
 };
 
@@ -142,6 +144,7 @@ function startLevel(idx) {
   G.shake = 0;
   G.hintT = 6;
   G.demoDoneT = 0;
+  G.demoGrace = false;
   G.victoryT = 0;
 
   G.state = 'battle';
@@ -565,6 +568,17 @@ function fireRocket() {
 /* ================================================================
    胜负
 ================================================================ */
+function beginFight() {
+  if (G.state !== 'battle' || G.phase !== 'demo') return;
+  G.phase = 'fight';
+  G.waveDelay = 1.4;
+  G.victoryT = 0;
+  G.demoGrace = false;
+  setAnnounce(G.hook.uses > 0 ? '没建筑可拆了，僵尸来了！' : '僵尸来了！');
+  Snd.whoosh();
+  updateHUD(true);
+}
+
 function doVictory() {
   if (G.state !== 'battle') return;
   G.state = 'victory';
@@ -631,14 +645,18 @@ function update(dt) {
       && !G.bricks.some(b => b.state === 'falling' || b.state === 'collect')
       && !G.pendingBooms.length;
     const pullable = G.bricks.some(b => b.state === 'rest' && (b.type === '#' || b.type === 'T'));
-    if (settled && (G.hook.uses <= 0 || !pullable)) {
+    // 地上建筑结构是否已全部消失（剩下的最多是贴地一排砖）
+    const structureGone = !G.bricks.some(b => b.state === 'rest' && b.y < ROAD_Y - G.CELL - 0.5);
+    if (settled && (G.hook.uses <= 0 || !pullable || structureGone)) {
+      // 钩子还有剩、贴地砖还能拉时给一段宽限时间抢救弹药，其余情况 1 秒后开战
+      const grace = G.hook.uses > 0 && pullable && structureGone;
       G.demoDoneT += dt;
-      if (G.demoDoneT > 1) {
-        G.phase = 'fight';
-        G.waveDelay = 1.4;
-        setAnnounce('僵尸来了！');
-      }
-    } else G.demoDoneT = 0;
+      G.demoGrace = grace;
+      if (G.demoDoneT > (grace ? DEMO_GRACE : 1)) beginFight();
+    } else {
+      G.demoDoneT = 0;
+      G.demoGrace = false;
+    }
   } else if (G.phase === 'fight') {
     // 波次推进
     if (G.waveDelay > 0) {
@@ -1331,6 +1349,52 @@ function drawUI() {
     ctx.fillText(text, W / 2, 115);
     ctx.globalAlpha = 1;
   }
+
+  // 建筑已拆完 · 开战倒计时（钩子有剩时给玩家抢救贴地砖的时间）
+  if (G.phase === 'demo' && G.demoGrace) {
+    const left = Math.max(1, Math.ceil(DEMO_GRACE - G.demoDoneT));
+    ctx.font = 'bold 21px sans-serif';
+    ctx.fillStyle = '#ffd94d';
+    ctx.strokeStyle = 'rgba(0,0,0,.6)';
+    ctx.lineWidth = 5;
+    const txt = `建筑拆完了！${left} 秒后僵尸来袭，抓紧拉砖…`;
+    ctx.strokeText(txt, W / 2, 152);
+    ctx.fillText(txt, W / 2, 152);
+  }
+
+  // 提前开战按钮
+  if (G.phase === 'demo') drawFightBtn();
+}
+
+function hitFightBtn(x, y) {
+  const b = FIGHT_BTN;
+  return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+}
+
+function drawFightBtn() {
+  const b = FIGHT_BTN;
+  const hov = mouse.over && hitFightBtn(mouse.x, mouse.y);
+  const pulse = G.demoGrace ? 1 + Math.sin(G.time * 7) * 0.05 : 1;
+  ctx.save();
+  ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-b.w / 2, -b.h / 2);
+  const g = ctx.createLinearGradient(0, 0, 0, b.h);
+  g.addColorStop(0, hov ? '#ffa64d' : '#ff8a3c');
+  g.addColorStop(1, hov ? '#f06a34' : '#e0522c');
+  ctx.fillStyle = g;
+  roundRect(0, 0, b.w, b.h, 12); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.55)';
+  ctx.lineWidth = 2;
+  roundRect(1.5, 1.5, b.w - 3, b.h - 3, 10.5); ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 19px sans-serif';
+  ctx.fillText('开战 ▶', b.w / 2, 28);
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.9)';
+  ctx.fillText('提前迎战', b.w / 2, 44);
+  ctx.restore();
 }
 
 /* ================================================================
@@ -1373,6 +1437,7 @@ function showTitle() {
         <p><b>阶段一 拆迁：</b>点击建筑上的砖块，钩子把它拉出来，<br>塌落的砖块全部掉进漏斗，变成小人的<b>投掷弹药</b></p>
         <p><b>策略：</b>钩子次数有限，拉关键支撑，塌得越多弹药越多！</p>
         <p><b>阶段二 战斗：</b>钩子用完后僵尸一波波进攻，<br>小人自动扔砖块，消灭全部波次即通关</p>
+        <p><b>小贴士：</b>建筑拆完后会自动开战；拆迁阶段也可点右下角【开战】提前迎战</p>
         <p><b>养成：</b>砖块资源可升级伤害/生命/钩爪，还能买火箭</p>
       </div>
       <div class="lvgrid">
@@ -1561,6 +1626,8 @@ canvas.addEventListener('pointermove', (e) => {
   const p = canvasPos(e);
   mouse.x = p.x; mouse.y = p.y; mouse.over = true;
   hoverBrick = findBrickAt(p.x, p.y);
+  const onBtn = G.state === 'battle' && G.phase === 'demo' && hitFightBtn(p.x, p.y);
+  canvas.style.cursor = onBtn ? 'pointer' : '';
 });
 canvas.addEventListener('pointerleave', () => { mouse.over = false; hoverBrick = null; });
 canvas.addEventListener('pointerdown', (e) => {
@@ -1568,6 +1635,7 @@ canvas.addEventListener('pointerdown', (e) => {
   Snd.unlock();
   const p = canvasPos(e);
   mouse.x = p.x; mouse.y = p.y;
+  if (hitFightBtn(p.x, p.y)) { Snd.click(); beginFight(); return; }
   tryPull(findBrickAt(p.x, p.y));
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1592,6 +1660,10 @@ window.addEventListener('keydown', (e) => {
     Snd.toggle();
   } else if (k === 'b' && G.state === 'battle') {
     fireRocket();
+  } else if ((k === ' ' || k === 'f') && G.state === 'battle' && G.phase === 'demo') {
+    e.preventDefault();
+    Snd.unlock();
+    beginFight();
   } else if (k === 'r' && (G.state === 'battle' || G.state === 'pause')) {
     startLevel(G.levelIdx);
   }
